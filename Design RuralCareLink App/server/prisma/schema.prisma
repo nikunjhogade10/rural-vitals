@@ -1,0 +1,319 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── ENUMS ──────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  HEALTH_WORKER
+  DOCTOR
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum VisitStatus {
+  DRAFT
+  PENDING_SYNC
+  SYNCED
+  REVIEWED
+  COMPLETED
+  FAILED
+}
+
+enum ConsultationMode {
+  OFFLINE
+  TEXT
+  AUDIO
+  VIDEO
+}
+
+enum NetworkStatus {
+  ONLINE
+  WEAK
+  OFFLINE
+}
+
+enum SyncStatus {
+  PENDING
+  PROCESSING
+  SYNCED
+  FAILED
+}
+
+enum NotificationType {
+  DOCTOR_ALERT
+  SYNC_ALERT
+  REMINDER
+  SYSTEM
+}
+
+// ─── FACILITY ───────────────────────────────────────────
+
+model Facility {
+  id        String   @id @default(uuid())
+  name      String
+  type      String   // PHC, HWC, CHC
+  hmisCode  String   @unique
+  block     String
+  district  String
+  state     String
+  village   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users    User[]
+  patients Patient[]
+  visits   Visit[]
+}
+
+// ─── USER ───────────────────────────────────────────────
+
+model User {
+  id                   String   @id @default(uuid())
+  fullName             String
+  employeeId           String   @unique
+  email                String?  @unique
+  phone                String?
+  passwordHash         String
+  role                 Role     @default(HEALTH_WORKER)
+  facilityId           String
+  facility             Facility @relation(fields: [facilityId], references: [id])
+  preferredLanguage    String   @default("en")
+  fontSizePreference   String   @default("Medium")
+  highContrastEnabled  Boolean  @default(false)
+  audioGuidanceEnabled Boolean  @default(false)
+  isActive             Boolean  @default(true)
+  lastLoginAt          DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  createdVisits      Visit[]            @relation("VisitCreator")
+  assignedVisits     Visit[]            @relation("AssignedDoctor")
+  vitalRecords       VitalRecord[]
+  consultationNotes  ConsultationNote[]
+  prescriptions      Prescription[]
+  notifications      Notification[]
+  syncJobs           SyncJob[]
+  syncHistories      SyncHistory[]
+  auditLogs          AuditLog[]
+  createdPatients    Patient[]
+}
+
+// ─── PATIENT ────────────────────────────────────────────
+
+model Patient {
+  id                String   @id @default(uuid())
+  fullName          String
+  gender            Gender
+  age               Int
+  dateOfBirth       DateTime?
+  phone             String?
+  village           String?
+  district          String?
+  state             String?
+  emergencyContact  String?
+  abhaNumber        String?  // Aadhaar/ABHA Health ID
+  preferredLanguage String   @default("en")
+  facilityId        String?
+  facility          Facility? @relation(fields: [facilityId], references: [id])
+  createdById       String
+  createdBy         User     @relation(fields: [createdById], references: [id])
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  visits Visit[]
+}
+
+// ─── VISIT ──────────────────────────────────────────────
+
+model Visit {
+  id               String           @id @default(uuid())
+  visitNumber      String           @unique // RC-2024-0001
+  patientId        String
+  patient          Patient          @relation(fields: [patientId], references: [id])
+  facilityId       String
+  facility         Facility         @relation(fields: [facilityId], references: [id])
+  createdById      String
+  createdBy        User             @relation("VisitCreator", fields: [createdById], references: [id])
+  assignedDoctorId String?
+  assignedDoctor   User?            @relation("AssignedDoctor", fields: [assignedDoctorId], references: [id])
+  visitDate        DateTime         @default(now())
+  visitType        String?          // routine, emergency, follow-up
+  chiefComplaint   String?
+  symptoms         String[]         // ["Fever", "Cough"]
+  diagnosis        String?
+  status           VisitStatus      @default(DRAFT)
+  consultationMode ConsultationMode @default(OFFLINE)
+  networkStatus    NetworkStatus    @default(OFFLINE)
+  syncRequired     Boolean          @default(true)
+  followUpDate     DateTime?
+  syncedAt         DateTime?
+  reviewedAt       DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  vitalRecords      VitalRecord[]
+  consultationNotes ConsultationNote[]
+  prescriptions     Prescription[]
+  images            VisitImage[]
+}
+
+// ─── VITAL RECORD ───────────────────────────────────────
+
+model VitalRecord {
+  id              String   @id @default(uuid())
+  visitId         String
+  visit           Visit    @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  temperature     Float?   // °F
+  pulse           Int?     // bpm
+  spo2            Int?     // %
+  systolicBP      Int?     // mmHg
+  diastolicBP     Int?     // mmHg
+  respiratoryRate Int?
+  weight          Float?   // kg
+  height          Float?   // cm
+  bloodSugar      Float?
+  hemoglobin      Float?
+  notes           String?
+  recordedById    String
+  recordedBy      User     @relation(fields: [recordedById], references: [id])
+  recordedAt      DateTime @default(now())
+}
+
+// ─── CONSULTATION NOTE ──────────────────────────────────
+
+model ConsultationNote {
+  id         String   @id @default(uuid())
+  visitId    String
+  visit      Visit    @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  authorId   String
+  author     User     @relation(fields: [authorId], references: [id])
+  authorRole Role
+  noteType   String   // clinical_notes, doctor_review, follow_up
+  content    String
+  createdAt  DateTime @default(now())
+}
+
+// ─── PRESCRIPTION ───────────────────────────────────────
+
+model Prescription {
+  id             String   @id @default(uuid())
+  visitId        String
+  visit          Visit    @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  prescribedById String
+  prescribedBy   User     @relation(fields: [prescribedById], references: [id])
+  medicationName String
+  dosage         String?
+  frequency      String?
+  duration       String?
+  instructions   String?
+  createdAt      DateTime @default(now())
+}
+
+// ─── VISIT IMAGE ────────────────────────────────────────
+
+model VisitImage {
+  id         String   @id @default(uuid())
+  visitId    String
+  visit      Visit    @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  filename   String
+  mimeType   String
+  sizeBytes  Int
+  url        String
+  uploadedAt DateTime @default(now())
+}
+
+// ─── NOTIFICATION ───────────────────────────────────────
+
+model Notification {
+  id                String           @id @default(uuid())
+  userId            String
+  user              User             @relation(fields: [userId], references: [id])
+  type              NotificationType
+  title             String
+  message           String
+  relatedEntityType String?          // visit, patient, sync
+  relatedEntityId   String?
+  isRead            Boolean          @default(false)
+  createdAt         DateTime         @default(now())
+}
+
+// ─── SYNC JOB ───────────────────────────────────────────
+
+model SyncJob {
+  id              String     @id @default(uuid())
+  clientId        String     @unique // UUID generated on device for dedup
+  entityType      String     // patient, visit, vitalRecord, image
+  entityId        String?    // server-side ID after sync
+  actionType      String     // CREATE, UPDATE
+  syncStatus      SyncStatus @default(PENDING)
+  retryCount      Int        @default(0)
+  lastError       String?
+  payloadSnapshot Json
+  createdById     String
+  createdBy       User       @relation(fields: [createdById], references: [id])
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+}
+
+// ─── SYNC HISTORY ───────────────────────────────────────
+
+model SyncHistory {
+  id           String    @id @default(uuid())
+  triggeredById String
+  triggeredBy  User      @relation(fields: [triggeredById], references: [id])
+  totalRecords Int
+  successCount Int       @default(0)
+  failedCount  Int       @default(0)
+  status       SyncStatus
+  startedAt    DateTime  @default(now())
+  finishedAt   DateTime?
+}
+
+// ─── AUDIT LOG ──────────────────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  action     String   // CREATE, UPDATE, DELETE, LOGIN, SYNC
+  entityType String   // patient, visit, user, sync
+  entityId   String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+}
+
+// ─── TRANSLATION ────────────────────────────────────────
+
+model TranslationLabel {
+  id           String   @id @default(uuid())
+  key          String   // "dashboard.welcome"
+  languageCode String   // "en", "hi", "mr", "kn"
+  value        String
+  screen       String?  // "dashboard", "login", "patient"
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([key, languageCode])
+}
+
+// ─── SUPPORTED LANGUAGE ─────────────────────────────────
+
+model SupportedLanguage {
+  code       String  @id // "en", "hi", "mr", "kn"
+  name       String      // "English"
+  nativeName String      // "हिंदी"
+  script     String      // "A", "अ"
+  preview    String      // "How are you feeling today?"
+  isActive   Boolean @default(true)
+}
