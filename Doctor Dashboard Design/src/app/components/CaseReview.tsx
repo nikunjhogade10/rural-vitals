@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { ArrowLeft, MapPin, Phone, Globe, Thermometer, Activity, Heart, Wind, Image, Clock, CheckCircle2, Save, Send, ArrowRightLeft, Plus, X, Video, MessageSquare, Mic, PhoneOff, Wifi, WifiOff } from "lucide-react";
+import { ArrowLeft, MapPin, Phone, Globe, Thermometer, Activity, Heart, Wind, Image, Clock, CheckCircle2, Save, Send, ArrowRightLeft, Plus, X, Video, MessageSquare, Mic, MicOff, VideoOff, PhoneOff, Wifi, WifiOff, FileText } from "lucide-react";
 import api from "../services/api";
 
 interface Props {
@@ -26,7 +26,29 @@ export function CaseReview({ caseId, onBack }: Props) {
   const [mockConnection, setMockConnection] = useState<"ONLINE" | "WEAK" | "OFFLINE">("ONLINE");
   const [callStatus, setCallStatus] = useState<"IDLE" | "CONNECTING" | "ONGOING">("IDLE");
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [micActive, setMicActive] = useState(true);
+  const [cameraActive, setCameraActive] = useState(true);
   const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+
+  const toggleMic = () => {
+    if (localStream) {
+      localStream.getAudioTracks().forEach(track => {
+        track.enabled = !micActive;
+      });
+    }
+    setMicActive(!micActive);
+  };
+
+  const toggleCamera = () => {
+    if (localStream) {
+      localStream.getVideoTracks().forEach(track => {
+        track.enabled = !cameraActive;
+      });
+    }
+    setCameraActive(!cameraActive);
+  };
 
   // Poll server for call state from app
   useEffect(() => {
@@ -61,28 +83,104 @@ export function CaseReview({ caseId, onBack }: Props) {
     };
   }, [caseId, callStatus]);
 
-  // Handle webcam stream
+  // Handle WebRTC connection (Doctor side)
   useEffect(() => {
     let activeStream: MediaStream | null = null;
-    if (callStatus === "ONGOING" && mockConnection === "ONLINE") {
-      navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-        .then(stream => {
-          activeStream = stream;
-          setLocalStream(stream);
-          if (localVideoRef.current) {
-            localVideoRef.current.srcObject = stream;
-          }
-        })
-        .catch(err => {
-          console.warn("Webcam access denied / unavailable:", err);
+    let pollInterval: NodeJS.Timeout | null = null;
+    let active = true;
+
+    async function setupWebRTC() {
+      try {
+        // 1. Get user media
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        if (!active) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        activeStream = stream;
+        setLocalStream(stream);
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
+        }
+
+        // 2. Create RTCPeerConnection
+        const pc = new RTCPeerConnection({
+          iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
         });
+        pcRef.current = pc;
+
+        // 3. Add tracks
+        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+        // 4. Handle remote stream
+        pc.ontrack = (event) => {
+          if (remoteVideoRef.current && event.streams[0]) {
+            remoteVideoRef.current.srcObject = event.streams[0];
+          }
+        };
+
+        // 5. Create Offer
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        // 6. Wait for ICE gathering to complete before sending SDP
+        pc.onicegatheringstatechange = async () => {
+          if (pc.iceGatheringState === "complete" && pc.localDescription) {
+            try {
+              // Post offer to server signaling
+              await api.post(`/visits/${caseId}/signal`, {
+                sender: "doctor",
+                signal: JSON.stringify(pc.localDescription)
+              });
+            } catch (err) {
+              console.warn("Failed to upload signaling offer:", err);
+            }
+          }
+        };
+
+        // 7. Poll for Nurse's Answer
+        pollInterval = setInterval(async () => {
+          try {
+            const res = await api.get(`/visits/${caseId}/signal`);
+            if (!active) return;
+            if (res.nurse && !pc.remoteDescription) {
+              const answer = JSON.parse(res.nurse);
+              await pc.setRemoteDescription(new RTCSessionDescription(answer));
+              if (pollInterval) clearInterval(pollInterval);
+            }
+          } catch (err) {
+            console.warn("Error polling signaling answer:", err);
+          }
+        }, 1500);
+
+      } catch (err) {
+        console.warn("WebRTC setup failed:", err);
+      }
+    }
+
+    if (callStatus === "ONGOING" && mockConnection === "ONLINE") {
+      setupWebRTC();
     } else {
+      // Cleanup
+      if (pcRef.current) {
+        pcRef.current.close();
+        pcRef.current = null;
+      }
       if (localStream) {
         localStream.getTracks().forEach(track => track.stop());
         setLocalStream(null);
       }
+      if (pollInterval) clearInterval(pollInterval);
+      api.delete(`/visits/${caseId}/signal`).catch(() => {});
     }
+
     return () => {
+      active = false;
+      if (pollInterval) clearInterval(pollInterval);
+      if (pcRef.current) {
+        pcRef.current.close();
+        pcRef.current = null;
+      }
       if (activeStream) {
         activeStream.getTracks().forEach(track => track.stop());
       }
@@ -90,7 +188,7 @@ export function CaseReview({ caseId, onBack }: Props) {
         localStream.getTracks().forEach(track => track.stop());
       }
     };
-  }, [callStatus, mockConnection]);
+  }, [callStatus, mockConnection, caseId]);
 
   const [showReferModal, setShowReferModal] = useState(false);
   const [refHospital, setRefHospital] = useState("");
@@ -350,20 +448,43 @@ export function CaseReview({ caseId, onBack }: Props) {
                   No attachments uploaded
                 </div>
               ) : (
-                c.images.map((img: any, i: number) => (
-                  <div key={img.id || i} className="aspect-square rounded-lg overflow-hidden border flex items-center justify-center bg-[#f8fafc]">
-                    <a href={img.url.startsWith("http") ? img.url : `http://localhost:4000${img.url}`} target="_blank" rel="noopener noreferrer" className="w-full h-full block">
-                      <img
-                        src={img.url.startsWith("http") ? img.url : `http://localhost:4000${img.url}`}
-                        alt={img.filename || "Attachment"}
-                        className="w-full h-full object-cover transition-transform hover:scale-105"
-                        onError={(e) => {
-                          (e.target as HTMLElement).style.display = 'none';
-                        }}
-                      />
-                    </a>
-                  </div>
-                ))
+                c.images.map((img: any, i: number) => {
+                  const isPdf = img.mimeType === "application/pdf" || img.filename?.toLowerCase().endsWith(".pdf") || img.url?.toLowerCase().endsWith(".pdf");
+                  const fileUrl = img.url.startsWith("http") ? img.url : `${window.location.protocol}//${window.location.hostname}:4000${img.url}`;
+                  
+                  if (isPdf) {
+                    return (
+                      <div key={img.id || i} className="aspect-square rounded-lg border flex flex-col items-center justify-center p-3 bg-[#f8fafc] text-center hover:shadow-md transition-shadow relative">
+                        <a href={fileUrl} target="_blank" rel="noopener noreferrer" className="flex flex-col items-center justify-center w-full h-full gap-1.5">
+                          <div className="w-10 h-10 rounded-lg bg-[#ffebee] flex items-center justify-center text-[#d32f2f] mb-1">
+                            <FileText size={20} />
+                          </div>
+                          <span className="text-[10px] font-medium text-[#1a2332] line-clamp-2 px-1 break-all">
+                            {img.filename || "Lab Report.pdf"}
+                          </span>
+                          <span className="text-[9px] text-[#6b7a94]">
+                            {img.sizeBytes ? `${(img.sizeBytes / 1024).toFixed(1)} KB` : "PDF Document"}
+                          </span>
+                        </a>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div key={img.id || i} className="aspect-square rounded-lg overflow-hidden border flex items-center justify-center bg-[#f8fafc]">
+                      <a href={fileUrl} target="_blank" rel="noopener noreferrer" className="w-full h-full block">
+                        <img
+                          src={fileUrl}
+                          alt={img.filename || "Attachment"}
+                          className="w-full h-full object-cover transition-transform hover:scale-105"
+                          onError={(e) => {
+                            (e.target as HTMLElement).style.display = 'none';
+                          }}
+                        />
+                      </a>
+                    </div>
+                  );
+                })
               )}
             </div>
             <p className="text-[11px] text-[#6b7a94] mt-2 flex items-center gap-1">
@@ -490,11 +611,10 @@ export function CaseReview({ caseId, onBack }: Props) {
             ) : (
               <div className="relative rounded-lg overflow-hidden bg-[#1a2332] h-[200px] flex items-center justify-center group">
                 <video
-                  ref={localVideoRef}
+                  ref={remoteVideoRef}
                   autoPlay
                   playsInline
-                  muted
-                  className="w-full h-full object-cover transform scale-x-[-1]"
+                  className="w-full h-full object-cover"
                 />
                 <div className="absolute top-3 left-3 flex items-center gap-2">
                   <div className="bg-black/60 text-white text-[10px] font-medium px-2 py-1 rounded backdrop-blur-sm">
@@ -506,14 +626,30 @@ export function CaseReview({ caseId, onBack }: Props) {
                   </div>
                 </div>
                 <div className="absolute bottom-3 right-3 w-20 h-24 bg-gray-800 rounded-lg border-2 border-white/20 overflow-hidden shadow-lg flex items-center justify-center">
-                  <div className="text-center text-white p-1">
-                    <div className="w-8 h-8 rounded-full bg-[#1565C0] text-xs font-bold flex items-center justify-center mx-auto mb-1">DR</div>
-                    <span className="text-[8px] text-gray-300">Self View</span>
+                  <video
+                    ref={localVideoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-cover transform scale-x-[-1]"
+                  />
+                  <div className="absolute bottom-1 left-1 bg-black/60 px-1 py-0.5 rounded text-[8px] text-gray-300">
+                    Self
                   </div>
                 </div>
                 <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                  <button className="w-10 h-10 rounded-full bg-white/20 text-white flex items-center justify-center backdrop-blur-sm hover:bg-white/30 transition-colors"><Mic className="w-5 h-5" /></button>
-                  <button className="w-10 h-10 rounded-full bg-white/20 text-white flex items-center justify-center backdrop-blur-sm hover:bg-white/30 transition-colors"><Video className="w-5 h-5" /></button>
+                  <button 
+                    onClick={toggleMic}
+                    className={`w-10 h-10 rounded-full flex items-center justify-center backdrop-blur-sm transition-colors ${micActive ? "bg-white/20 text-white hover:bg-white/30" : "bg-red-500 text-white hover:bg-red-600"}`}
+                  >
+                    {micActive ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+                  </button>
+                  <button 
+                    onClick={toggleCamera}
+                    className={`w-10 h-10 rounded-full flex items-center justify-center backdrop-blur-sm transition-colors ${cameraActive ? "bg-white/20 text-white hover:bg-white/30" : "bg-red-500 text-white hover:bg-red-600"}`}
+                  >
+                    {cameraActive ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+                  </button>
                   <button 
                     onClick={async () => {
                       setCallStatus("IDLE");

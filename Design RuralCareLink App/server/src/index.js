@@ -67,6 +67,27 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/i18n', i18nRoutes);
 
+// ─── WebRTC Signaling ───────────────────────────────────
+const signals = {};
+app.post('/api/visits/:id/signal', (req, res) => {
+  const { id } = req.params;
+  const { sender, signal } = req.body;
+  if (!signals[id]) signals[id] = {};
+  signals[id][sender] = signal;
+  res.json({ success: true });
+});
+
+app.get('/api/visits/:id/signal', (req, res) => {
+  const { id } = req.params;
+  res.json(signals[id] || {});
+});
+
+app.delete('/api/visits/:id/signal', (req, res) => {
+  const { id } = req.params;
+  delete signals[id];
+  res.json({ success: true });
+});
+
 // ─── Health check ───────────────────────────────────────
 
 app.get('/api/health', (req, res) => {

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { RefreshCw, CheckCircle, AlertCircle, Wifi, WifiOff, Clock } from "lucide-react";
 import { useLocalData } from "../../context/LocalDataContext";
-import { pushPendingRecords, SyncResult } from "../../services/syncService";
+import { pushPendingRecords, pullServerRecords, SyncResult } from "../../services/syncService";
 import { useI18n } from "../../context/I18nContext";
 import { syncService } from "../../services";
 
@@ -65,6 +65,11 @@ export function SyncScreen({ isOnline }: SyncScreenProps) {
     try {
       const result = await pushPendingRecords();
       setLastResult(result);
+      try {
+        await pullServerRecords();
+      } catch (pullErr) {
+        console.error("Pull failed during sync:", pullErr);
+      }
       await refresh(); // reload local state after sync
       await loadHistory(); // refresh history list from backend
     } catch (err) {
@@ -81,7 +86,7 @@ export function SyncScreen({ isOnline }: SyncScreenProps) {
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", background: "#f4f7f4", paddingBottom: 100 }}>
       {/* Header */}
-      <div style={{ background: "linear-gradient(180deg, #1565C0 0%, #1e88e5 100%)", padding: "48px 24px 28px" }}>
+      <div style={{ background: "linear-gradient(135deg, #1b5e20 0%, #2E7D32 100%)", padding: "48px 24px 28px" }}>
         <h1 style={{ color: "#fff", margin: "0 0 6px", fontSize: 22, fontWeight: 700 }}>
           {t('sync_title', 'Data Synchronization')}
         </h1>

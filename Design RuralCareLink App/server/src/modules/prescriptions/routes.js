@@ -1,7 +1,7 @@
 const express = require('express');
 const Joi = require('joi');
 const prisma = require('../../config/db');
-const { authenticate } = require('../../middlewares/auth');
+const { authenticate, authorize } = require('../../middlewares/auth');
 const { validate } = require('../../middlewares/validate');
 
 const router = express.Router();
@@ -32,7 +32,7 @@ router.get('/:visitId', authenticate, async (req, res, next) => {
 
 // ─── POST /api/prescriptions ────────────────────────────
 
-router.post('/', authenticate, validate(prescriptionSchema), async (req, res, next) => {
+router.post('/', authenticate, authorize('DOCTOR'), validate(prescriptionSchema), async (req, res, next) => {
   try {
     let resolvedVisitId = req.body.visitId;
     let visit = await prisma.visit.findUnique({
@@ -54,6 +54,10 @@ router.post('/', authenticate, validate(prescriptionSchema), async (req, res, ne
       }
     }
 
+    const prescriberName = req.user.role === 'DOCTOR'
+      ? (req.user.fullName.startsWith('Dr.') ? req.user.fullName : `Dr. ${req.user.fullName}`)
+      : req.user.fullName;
+
     let prescription;
     if (visit) {
       prescription = await prisma.prescription.create({
@@ -74,7 +78,7 @@ router.post('/', authenticate, validate(prescriptionSchema), async (req, res, ne
           userId: visit.createdById,
           type: 'DOCTOR_ALERT',
           title: 'New Prescription Received',
-          message: `Dr. ${req.user.fullName} prescribed ${prescription.medicationName} (${prescription.dosage || ''}) for ${visit.patient.fullName}.`,
+          message: `${prescriberName} prescribed ${prescription.medicationName} (${prescription.dosage || ''}) for ${visit.patient.fullName}.`,
           relatedEntityType: 'visit',
           relatedEntityId: visit.id,
         },
@@ -88,7 +92,7 @@ router.post('/', authenticate, validate(prescriptionSchema), async (req, res, ne
           userId: req.user.id,
           type: 'DOCTOR_ALERT',
           title: 'New Prescription Received (Offline)',
-          message: `Dr. ${req.user.fullName} prescribed ${req.body.medicationName} (${req.body.dosage || ''}) for Patient.`,
+          message: `${prescriberName} prescribed ${req.body.medicationName} (${req.body.dosage || ''}) for Patient.`,
           relatedEntityType: 'system',
         },
       });

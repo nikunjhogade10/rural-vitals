@@ -22,6 +22,8 @@ import {
   LocalPatient,
   LocalVisit,
   LocalReport,
+  savePulledPatients,
+  savePulledVisits,
 } from '../db/localDB';
 
 export interface SyncResult {
@@ -358,3 +360,25 @@ async function syncReport(r: LocalReport, patientServerId: string, serverVisitId
   const json = await res.json();
   return json.report as { id: string };
 }
+
+/**
+ * Pull new/updated records from the server and store them in local IndexedDB.
+ */
+export async function pullServerRecords(): Promise<void> {
+  const lastSyncTime = localStorage.getItem('rcl_last_pull_time');
+  const path = lastSyncTime ? `/sync/pull?since=${encodeURIComponent(lastSyncTime)}` : '/sync/pull';
+
+  const data = await api.get(path);
+  if (data) {
+    if (data.patients && data.patients.length > 0) {
+      await savePulledPatients(data.patients);
+    }
+    if (data.visits && data.visits.length > 0) {
+      await savePulledVisits(data.visits);
+    }
+    if (data.serverTime) {
+      localStorage.setItem('rcl_last_pull_time', data.serverTime);
+    }
+  }
+}
+

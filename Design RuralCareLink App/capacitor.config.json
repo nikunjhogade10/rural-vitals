@@ -1,5 +1,16 @@
 {
   "appId": "com.ruralcarelink.app",
   "appName": "RuralCareLink",
-  "webDir": "dist"
+  "webDir": "dist",
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  },
+  "android": {
+    "allowMixedContent": true
+  },
+  "server": {
+    "cleartext": true
+  }
 }

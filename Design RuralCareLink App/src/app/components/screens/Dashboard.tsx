@@ -32,7 +32,13 @@ export function Dashboard({ isOnline, onNavigate, currentLang, onChangeLang, onP
 
   // Show 5 most recent visits as patient cards
   const recentCases = useMemo((): Patient[] => {
-    const patientMap = new Map(patients.map(p => [p.id, p]));
+    const patientMap = new Map();
+    for (const p of patients) {
+      patientMap.set(p.id, p);
+      if (p.serverId) {
+        patientMap.set(p.serverId, p);
+      }
+    }
     return visits.slice(0, 5).map(v => {
       const p = patientMap.get(v.patientId);
       return {

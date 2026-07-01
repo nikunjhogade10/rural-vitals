@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">RuralCareLink</string>
+    <string name="title_activity_main">RuralCareLink</string>
+    <string name="package_name">com.ruralcarelink.app</string>
+    <string name="custom_url_scheme">com.ruralcarelink.app</string>
+</resources>

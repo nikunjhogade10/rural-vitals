@@ -28,8 +28,14 @@ router.post('/login', validate(loginSchema), async (req, res, next) => {
   try {
     const { employeeId, password } = req.body;
 
-    const user = await prisma.user.findUnique({
-      where: { employeeId },
+    // Search by either employeeId OR email
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { employeeId: { equals: employeeId, mode: 'insensitive' } },
+          { email: { equals: employeeId, mode: 'insensitive' } }
+        ]
+      },
       include: { facility: true },
     });
 

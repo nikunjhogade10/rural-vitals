@@ -71,6 +71,62 @@ export interface LocalReport {
 const DB_NAME = 'ruralcarelink';
 const DB_VERSION = 2;  // v2 adds reports store
 
+async function cleanupLocalDuplicates(db: IDBPDatabase) {
+  try {
+    // 1. Deduplicate Patients in local IndexedDB
+    const txPatients = db.transaction('patients', 'readwrite');
+    const patients = await txPatients.store.getAll();
+    const patientGroups: Record<string, typeof patients> = {};
+    for (const p of patients) {
+      if (!p.serverId) continue;
+      if (!patientGroups[p.serverId]) {
+        patientGroups[p.serverId] = [];
+      }
+      patientGroups[p.serverId].push(p);
+    }
+
+    for (const [serverId, group] of Object.entries(patientGroups)) {
+      if (group.length > 1) {
+        // Find the pulled duplicate (where id === serverId) and the original (where id !== serverId)
+        const duplicate = group.find(p => p.id === serverId);
+        const original = group.find(p => p.id !== serverId);
+        if (duplicate && original) {
+          console.log(`[localDB] Deduplicating patient: removing duplicate ID ${duplicate.id} in favor of original ID ${original.id}`);
+          await txPatients.store.delete(duplicate.id);
+        }
+      }
+    }
+    await txPatients.done;
+
+    // 2. Deduplicate Visits in local IndexedDB
+    const txVisits = db.transaction('visits', 'readwrite');
+    const visits = await txVisits.store.getAll();
+    const visitGroups: Record<string, typeof visits> = {};
+    for (const v of visits) {
+      if (!v.serverId) continue;
+      if (!visitGroups[v.serverId]) {
+        visitGroups[v.serverId] = [];
+      }
+      visitGroups[v.serverId].push(v);
+    }
+
+    for (const [serverId, group] of Object.entries(visitGroups)) {
+      if (group.length > 1) {
+        // Find the pulled duplicate (where id === serverId) and the original (where id !== serverId)
+        const duplicate = group.find(v => v.id === serverId);
+        const original = group.find(v => v.id !== serverId);
+        if (duplicate && original) {
+          console.log(`[localDB] Deduplicating visit: removing duplicate ID ${duplicate.id} in favor of original ID ${original.id}`);
+          await txVisits.store.delete(duplicate.id);
+        }
+      }
+    }
+    await txVisits.done;
+  } catch (err) {
+    console.error('[localDB] Failed to run local duplicates cleanup:', err);
+  }
+}
+
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
 function getDB(): Promise<IDBPDatabase> {
@@ -111,13 +167,17 @@ function getDB(): Promise<IDBPDatabase> {
       terminated() {
         dbPromise = null;
       },
-    }).then(db => {
+    }).then(async (db) => {
       // If a newer version is opened elsewhere (e.g. another tab, or HMR hot-reload),
       // close this connection immediately so the upgrade can proceed.
       db.addEventListener('versionchange', () => {
         db.close();
         dbPromise = null;
       });
+
+      // Clear any pre-existing client-side duplicates once on database startup
+      await cleanupLocalDuplicates(db);
+
       return db;
     }).catch((err: unknown) => {
       dbPromise = null;
@@ -154,7 +214,10 @@ export async function getAllPatients(): Promise<LocalPatient[]> {
 
 export async function getPatientById(id: string): Promise<LocalPatient | undefined> {
   const db = await getDB();
-  return db.get('patients', id);
+  const direct = await db.get('patients', id);
+  if (direct) return direct;
+  const all = await db.getAll('patients');
+  return all.find(p => p.serverId === id);
 }
 
 export async function getPendingPatients(): Promise<LocalPatient[]> {
@@ -170,7 +233,12 @@ export async function markPatientSynced(localId: string, serverId: string): Prom
   const db = await getDB();
   const p = await db.get('patients', localId);
   if (!p) return;
-  await db.put('patients', { ...p, serverId, syncStatus: 'synced', syncedAt: new Date().toISOString(), syncError: undefined });
+  await db.put('patients', {
+    ...p,
+    serverId,
+    syncStatus: 'synced',
+    syncedAt: new Date().toISOString(),
+  });
 }
 
 export async function markPatientFailed(localId: string, error: string): Promise<void> {
@@ -199,12 +267,23 @@ export async function getAllVisits(): Promise<LocalVisit[]> {
 
 export async function getVisitsByPatient(patientId: string): Promise<LocalVisit[]> {
   const db = await getDB();
-  return db.getAllFromIndex('visits', 'patientId', patientId);
+  const patient = await getPatientById(patientId);
+  const ids = new Set<string>();
+  ids.add(patientId);
+  if (patient) {
+    ids.add(patient.id);
+    if (patient.serverId) ids.add(patient.serverId);
+  }
+  const allVisits = await db.getAll('visits');
+  return allVisits.filter(v => ids.has(v.patientId) || (v.patientServerId && ids.has(v.patientServerId)));
 }
 
 export async function getVisitById(id: string): Promise<LocalVisit | undefined> {
   const db = await getDB();
-  return db.get('visits', id);
+  const direct = await db.get('visits', id);
+  if (direct) return direct;
+  const all = await db.getAll('visits');
+  return all.find(v => v.serverId === id);
 }
 
 export async function getPendingVisits(): Promise<LocalVisit[]> {
@@ -310,3 +389,68 @@ export async function linkReportsToVisit(reportIds: string[], visitId: string): 
     }
   }
 }
+
+export async function savePulledPatients(patients: any[]): Promise<void> {
+  const db = await getDB();
+  const allLocal = await db.getAll('patients');
+  const tx = db.transaction('patients', 'readwrite');
+  for (const p of patients) {
+    const existing = allLocal.find(x => x.id === p.id || x.serverId === p.id);
+    if (!existing || (existing.syncStatus === 'synced' && p.updatedAt > (existing.syncedAt || ''))) {
+      const targetId = existing ? existing.id : p.id;
+      await tx.store.put({
+        id: targetId,
+        serverId: p.id,
+        fullName: p.fullName,
+        age: p.age,
+        gender: p.gender,
+        phone: p.phone || undefined,
+        address: p.village || undefined,
+        healthId: p.abhaNumber || undefined,
+        preferredLanguage: p.preferredLanguage,
+        communicationLanguage: p.preferredLanguage,
+        facilityId: p.facilityId,
+        createdAt: p.createdAt,
+        syncStatus: 'synced',
+        syncedAt: p.updatedAt,
+      });
+    }
+  }
+  await tx.done;
+}
+
+export async function savePulledVisits(visits: any[]): Promise<void> {
+  const db = await getDB();
+  const allLocal = await db.getAll('visits');
+  const tx = db.transaction('visits', 'readwrite');
+  for (const v of visits) {
+    const existing = allLocal.find(x => x.id === v.id || x.serverId === v.id);
+    if (!existing || (existing.syncStatus === 'synced' && v.updatedAt > (existing.syncedAt || ''))) {
+      const targetId = existing ? existing.id : v.id;
+      const vr = v.vitalRecords?.[0];
+      const noteContent = v.consultationNotes?.map((n: any) => n.content).join('\n');
+      await tx.store.put({
+        id: targetId,
+        serverId: v.id,
+        patientId: v.patientId,
+        patientServerId: v.patientId,
+        chiefComplaint: v.chiefComplaint || '',
+        symptoms: v.symptoms || [],
+        notes: noteContent || undefined,
+        temperature: vr?.temperature || undefined,
+        pulse: vr?.pulse || undefined,
+        spo2: vr?.spo2 || undefined,
+        systolicBP: vr?.systolicBP || undefined,
+        diastolicBP: vr?.diastolicBP || undefined,
+        weight: vr?.weight || undefined,
+        createdAt: v.createdAt,
+        syncStatus: 'synced',
+        syncedAt: v.updatedAt,
+        status: v.status,
+        visitNumber: v.visitNumber,
+      });
+    }
+  }
+  await tx.done;
+}
+

@@ -33,7 +33,7 @@ const NAV_TAB_MAP: Record<NavTab, Screen> = {
 function AppInner() {
   const { user } = useAuth();
   const { setLocale } = useI18n();
-  const { pendingCount } = useLocalData();
+  const { pendingCount, refresh } = useLocalData();
   const [screen, setScreen] = useState<Screen>("splash");
   const [lang, setLang] = useState("en");
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -48,6 +48,17 @@ function AppInner() {
     window.addEventListener("offline", dn);
     return () => { window.removeEventListener("online", up); window.removeEventListener("offline", dn); };
   }, []);
+
+  // Auto-pull from server on login / online detection
+  useEffect(() => {
+    if (user && isOnline) {
+      import("./services/syncService").then(({ pullServerRecords }) => {
+        pullServerRecords()
+          .then(() => refresh())
+          .catch((err) => console.error("Auto-pull failed:", err));
+      });
+    }
+  }, [user, isOnline, refresh]);
 
   // Auto-redirect to login when user logs out while on a protected screen
   useEffect(() => {

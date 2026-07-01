@@ -27,6 +27,7 @@ export function ConsultationRoom({ visitId, patientName, onClose }: Consultation
   ]);
   const [inputText, setInputText] = useState("");
   const [connectionStatus, setConnectionStatus] = useState<"connecting" | "connected" | "low_bandwidth">("connecting");
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   
   // Internet degradation states
   const [showLowInternetModal, setShowLowInternetModal] = useState(false);
@@ -37,13 +38,19 @@ export function ConsultationRoom({ visitId, patientName, onClose }: Consultation
 
   // Server-side visit ID resolution state
   const [resolvedVisitId, setResolvedVisitId] = useState(visitId);
+  const [isReady, setIsReady] = useState(false);
+  const [doctorName, setDoctorName] = useState("Dr. Rajesh Kapoor");
 
   // Call ending flow states
   const [endingCallStatus, setEndingCallStatus] = useState<"idle" | "sending_prescription" | "done">("idle");
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const hasConnectedRef = useRef(false);
+
+  console.log("ConsultationRoom state:", { visitId, resolvedVisitId, isReady });
 
   // Load server-side ID if synced
   useEffect(() => {
@@ -51,36 +58,59 @@ export function ConsultationRoom({ visitId, patientName, onClose }: Consultation
       try {
         const { getVisitById } = await import("../../db/localDB");
         const localVisit = await getVisitById(visitId);
-        if (localVisit && localVisit.serverId) {
-          setResolvedVisitId(localVisit.serverId);
+        if (localVisit) {
+          if (localVisit.serverId) {
+            setResolvedVisitId(localVisit.serverId);
+          }
+          setIsReady(localVisit.syncStatus === "synced" || !!localVisit.serverId);
+        } else {
+          // Online-only fetched visits are ready by default
+          setIsReady(true);
         }
       } catch (e) {
         console.warn("Failed to load local visit:", e);
+        setIsReady(true);
       }
     }
     resolveId();
   }, [visitId]);
 
-  // Real API Signaling & Webcam Capture
+  // Real API Signaling & Webcam Capture (Nurse/App side)
   useEffect(() => {
-    if (!resolvedVisitId || resolvedVisitId === visitId) return;
+    if (!isReady || !resolvedVisitId) return;
 
     let active = true;
     let activeStream: MediaStream | null = null;
+    let pollInterval: NodeJS.Timeout | null = null;
+    let statusInterval: NodeJS.Timeout | null = null;
 
     async function startCall() {
       try {
         // 1. Tell server we are starting/joining the call
         const visitRes = await api.get(`/visits/${resolvedVisitId}`);
-        const currentMode = visitRes.data.visit.consultationMode;
+        const v = visitRes.visit;
+        if (v && v.assignedDoctor && v.assignedDoctor.fullName) {
+          const name = v.assignedDoctor.fullName.startsWith('Dr.') ? v.assignedDoctor.fullName : `Dr. ${v.assignedDoctor.fullName}`;
+          setDoctorName(name);
+        }
         
-        const isDoctorCalling = currentMode === "VIDEO";
         await api.patch(`/visits/${resolvedVisitId}`, {
           consultationMode: "VIDEO",
-          networkStatus: isDoctorCalling ? "ONLINE" : "WEAK"
+          networkStatus: "ONLINE"
         });
 
-        // 2. Start the camera
+        // Log current permission state
+        try {
+          if (navigator.permissions && navigator.permissions.query) {
+            const camStatus = await navigator.permissions.query({ name: 'camera' as any });
+            const micStatus = await navigator.permissions.query({ name: 'microphone' as any });
+            console.log("Permission states before getUserMedia:", { camera: camStatus.state, microphone: micStatus.state });
+          }
+        } catch (e) {
+          console.warn("Failed to query permissions API:", e);
+        }
+
+        // 2. Start the camera and microphone
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: 480, height: 360, facingMode: "user" },
           audio: true,
@@ -97,46 +127,118 @@ export function ConsultationRoom({ visitId, patientName, onClose }: Consultation
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
         }
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = stream;
-        }
-      } catch (err) {
-        console.warn("Camera access or call signaling failed:", err);
+
+        // 3. Create PeerConnection
+        const pc = new RTCPeerConnection({
+          iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+        });
+        pcRef.current = pc;
+
+        // 4. Add tracks
+        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+        // 5. Handle remote stream
+        pc.ontrack = (event) => {
+          if (event.streams[0]) {
+            setRemoteStream(event.streams[0]);
+            setConnectionStatus("connected");
+            hasConnectedRef.current = true;
+          }
+        };
+
+        // 6. Poll for Doctor's Offer
+        pollInterval = setInterval(async () => {
+          try {
+            const res = await api.get(`/visits/${resolvedVisitId}/signal`);
+            if (!active) return;
+            if (res.doctor && !pc.remoteDescription) {
+              const offer = JSON.parse(res.doctor);
+              await pc.setRemoteDescription(new RTCSessionDescription(offer));
+
+              // Create Answer
+              const answer = await pc.createAnswer();
+              await pc.setLocalDescription(answer);
+
+              // Wait for ICE gathering to complete before sending SDP
+              pc.onicegatheringstatechange = async () => {
+                if (pc.iceGatheringState === "complete" && pc.localDescription) {
+                  try {
+                    await api.post(`/visits/${resolvedVisitId}/signal`, {
+                      sender: "nurse",
+                      signal: JSON.stringify(pc.localDescription)
+                    });
+                  } catch (err) {
+                    console.warn("Failed to upload signaling answer:", err);
+                  }
+                }
+              };
+
+              if (pollInterval) clearInterval(pollInterval);
+            }
+          } catch (err) {
+            console.warn("Error polling signaling offer:", err);
+          }
+        }, 1500);
+
+      } catch (err: any) {
+        console.error("Camera access or call signaling failed:", err?.name, err?.message, err?.stack || err);
       }
     }
 
     startCall();
 
-    // 3. Poll to check if doctor connects or hangs up
-    const pollInterval = setInterval(async () => {
+    // 7. Poll to check if doctor hangs up
+    statusInterval = setInterval(async () => {
       try {
         const res = await api.get(`/visits/${resolvedVisitId}`);
-        const v = res.data.visit;
+        const v = res.visit;
         if (!active) return;
 
-        if (v.consultationMode === "OFFLINE") {
-          clearInterval(pollInterval);
+        if (v.status === "REVIEWED") {
+          if (statusInterval) clearInterval(statusInterval);
+          setEndingCallStatus("sending_prescription");
+          setTimeout(() => {
+            setEndingCallStatus("done");
+            setTimeout(() => {
+              onClose();
+            }, 2000);
+          }, 2000);
+        } else if (v.consultationMode === "OFFLINE") {
+          if (statusInterval) clearInterval(statusInterval);
           onClose();
-        } else if (v.networkStatus === "ONLINE") {
-          setConnectionStatus("connected");
         }
       } catch (err) {
         console.warn("Error polling call status:", err);
       }
-    }, 2000);
+    }, 3000);
 
     return () => {
       active = false;
-      clearInterval(pollInterval);
+      if (pollInterval) clearInterval(pollInterval);
+      if (statusInterval) clearInterval(statusInterval);
+      if (pcRef.current) {
+        pcRef.current.close();
+        pcRef.current = null;
+      }
       if (activeStream) {
         activeStream.getTracks().forEach(track => track.stop());
       }
-      api.patch(`/visits/${resolvedVisitId}`, {
-        consultationMode: "OFFLINE",
-        networkStatus: "OFFLINE"
-      }).catch(err => console.warn(err));
+      if (hasConnectedRef.current) {
+        api.patch(`/visits/${resolvedVisitId}`, {
+          consultationMode: "OFFLINE",
+          networkStatus: "OFFLINE"
+        }).catch(err => console.warn(err));
+      }
+      api.delete(`/visits/${resolvedVisitId}/signal`).catch(() => {});
     };
-  }, [resolvedVisitId]);
+  }, [resolvedVisitId, isReady]);
+
+  // Bind remote stream to video element when it becomes available and renders
+  useEffect(() => {
+    if (remoteVideoRef.current && remoteStream) {
+      remoteVideoRef.current.srcObject = remoteStream;
+    }
+  }, [remoteStream, connectionStatus]);
 
   // Auto-scroll chat
   useEffect(() => {
@@ -195,31 +297,27 @@ export function ConsultationRoom({ visitId, patientName, onClose }: Consultation
     setShowChat(true);
   };
 
-  // Terminate Consultation and Push Prescription
+  // Terminate Consultation session
   const handleEndCall = async () => {
     setEndingCallStatus("sending_prescription");
 
     try {
-      // Create prescription in DB (automatically triggers notification alert)
-      await api.post('/prescriptions', {
-        visitId: resolvedVisitId,
-        medicationName: "Paracetamol",
-        dosage: "500mg",
-        frequency: "1-0-1",
-        duration: "3 days",
-        instructions: "Take after meals",
+      // Close the call session on the server
+      await api.patch(`/visits/${resolvedVisitId}`, {
+        consultationMode: "OFFLINE",
+        networkStatus: "OFFLINE"
       });
     } catch (err) {
-      console.warn("Failed to push prescription on server, writing mock local prescription:", err);
+      console.warn("Failed to end call session on server:", err);
     }
 
-    // Hold loading screen for professional transmission animation
+    // Hold loading screen for professional transition animation
     setTimeout(() => {
       setEndingCallStatus("done");
       setTimeout(() => {
         onClose();
       }, 1500);
-    }, 2500);
+    }, 1500);
   };
 
   return (
@@ -360,7 +458,7 @@ export function ConsultationRoom({ visitId, patientName, onClose }: Consultation
 
                 <div style={{ marginTop: 20, textAlign: "center", zIndex: 3 }}>
                   <div style={{ fontSize: 20, fontWeight: 700, textShadow: "0 2px 4px rgba(0,0,0,0.5)" }}>
-                    Dr. Anil Deshmukh
+                    {doctorName}
                   </div>
                   <div style={{ fontSize: 13, color: "#a5d6a7", fontWeight: 500, marginTop: 4 }}>
                     Consulting Cardiologist
@@ -639,7 +737,7 @@ export function ConsultationRoom({ visitId, patientName, onClose }: Consultation
             }}>
               <div>
                 <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Consultation Chat</h3>
-                <span style={{ fontSize: 11, color: "#8a9aaa" }}>Live with Dr. Anil Deshmukh</span>
+                <span style={{ fontSize: 11, color: "#8a9aaa" }}>Live with {doctorName}</span>
               </div>
               <button
                 onClick={() => setShowChat(false)}
@@ -681,7 +779,7 @@ export function ConsultationRoom({ visitId, patientName, onClose }: Consultation
                     marginBottom: 2,
                     textAlign: m.sender === "nurse" ? "right" : "left"
                   }}>
-                    {m.sender === "nurse" ? "Nurse Priya" : "Dr. Anil"}
+                    {m.sender === "nurse" ? "Nurse Priya" : doctorName}
                   </div>
                   <div style={{
                     background: m.sender === "nurse" ? "#d1e7dd" : "#ffffff",

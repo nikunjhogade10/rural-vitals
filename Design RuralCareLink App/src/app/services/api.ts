@@ -16,9 +16,6 @@ async function request(path: string, options: RequestInit = {}, skipAuthCheck = 
 
   // Only treat 401 as session expiry for authenticated routes, never for login itself
   if (res.status === 401 && !skipAuthCheck) {
-    localStorage.removeItem('rcl_token');
-    localStorage.removeItem('rcl_user');
-    window.dispatchEvent(new Event('rcl:logout'));
     throw new Error('Session expired. Please login again.');
   }
 

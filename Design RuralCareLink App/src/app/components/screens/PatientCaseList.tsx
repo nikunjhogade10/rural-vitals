@@ -37,7 +37,13 @@ export function PatientCaseList({ onBack, onPatientClick, onRegisterNew, current
       }
     }
 
-    const patientMap = new Map(patients.map(p => [p.id, p]));
+    const patientMap = new Map();
+    for (const p of patients) {
+      patientMap.set(p.id, p);
+      if (p.serverId) {
+        patientMap.set(p.serverId, p);
+      }
+    }
     const rows: Patient[] = [];
 
     // Patients with visits

@@ -21,6 +21,26 @@ const labelMap: Record<string, Record<string, string>> = {
   mr: { name: "रुग्णाचे नाव / Patient Name", age: "वय / Age", gender: "लिंग / Gender", mobile: "मोबाइल नंबर / Mobile", address: "पत्ता / Address", healthId: "आधार / Health ID (ऐच्छिक)", prefLang: "पसंतीची भाषा / Preferred Language", commLang: "संपर्क भाषा / Communication Language" },
 };
 
+const Field = ({ label, icon, children }: { label: string; icon: React.ReactNode; children: React.ReactNode }) => (
+  <div>
+    <label style={{ display: "block", color: "#637074", fontSize: 13, marginBottom: 8 }}>{label}</label>
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        background: "#f4f7f4",
+        border: "1.5px solid rgba(0,0,0,0.07)",
+        borderRadius: 12,
+        padding: "13px 16px",
+      }}
+    >
+      <span style={{ color: "#8a9aaa", flexShrink: 0 }}>{icon}</span>
+      {children}
+    </div>
+  </div>
+);
+
 export function PatientRegistration({ onBack, onContinue, currentLang, onChangeLang }: PatientRegistrationProps) {
   const { addPatient } = useLocalData();
   const { user } = useAuth();
@@ -64,26 +84,6 @@ export function PatientRegistration({ onBack, onContinue, currentLang, onChangeL
       setSaving(false);
     }
   };
-
-  const Field = ({ label, icon, children }: { label: string; icon: React.ReactNode; children: React.ReactNode }) => (
-    <div>
-      <label style={{ display: "block", color: "#637074", fontSize: 13, marginBottom: 8 }}>{label}</label>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          background: "#f4f7f4",
-          border: "1.5px solid rgba(0,0,0,0.07)",
-          borderRadius: 12,
-          padding: "13px 16px",
-        }}
-      >
-        <span style={{ color: "#8a9aaa", flexShrink: 0 }}>{icon}</span>
-        {children}
-      </div>
-    </div>
-  );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", background: "#fff" }}>

@@ -215,12 +215,13 @@ router.patch(
       // Handle Call Notifications automatically
       if (req.body.consultationMode === 'VIDEO' && oldVisit.consultationMode !== 'VIDEO') {
         if (req.user.role === 'DOCTOR') {
+          const doctorName = req.user.fullName.startsWith('Dr.') ? req.user.fullName : `Dr. ${req.user.fullName}`;
           await prisma.notification.create({
             data: {
               userId: visit.createdById,
               type: 'DOCTOR_ALERT',
               title: 'Incoming Video Call',
-              message: `Dr. ${req.user.fullName} is calling for patient ${visit.patient.fullName}`,
+              message: `${doctorName} is calling for patient ${visit.patient.fullName}`,
               relatedEntityType: 'visit',
               relatedEntityId: visit.id,
             }
@@ -271,6 +272,8 @@ router.post(
           assignedDoctorId: req.user.id,
           reviewedAt: new Date(),
           followUpDate: followUpDate ? new Date(followUpDate) : null,
+          consultationMode: 'OFFLINE',
+          networkStatus: 'OFFLINE',
         },
         include: { patient: true, createdBy: true },
       });
@@ -325,12 +328,13 @@ router.post(
         prescriptionText = ` Prescribed: ${meds}.`;
       }
 
+      const reviewerName = req.user.fullName.startsWith('Dr.') ? req.user.fullName : `Dr. ${req.user.fullName}`;
       await prisma.notification.create({
         data: {
           userId: visit.createdById,
           type: 'DOCTOR_ALERT',
           title: 'Doctor Response & Prescription',
-          message: `Dr. ${req.user.fullName} reviewed ${visit.patient.fullName}'s case.${prescriptionText}${doctorNotes ? ' Note: ' + doctorNotes.slice(0, 100) : ''}`,
+          message: `${reviewerName} reviewed ${visit.patient.fullName}'s case.${prescriptionText}${doctorNotes ? ' Note: ' + doctorNotes.slice(0, 100) : ''}`,
           relatedEntityType: 'visit',
           relatedEntityId: visit.id,
         },
