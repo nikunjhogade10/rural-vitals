@@ -4,7 +4,7 @@ RuralCareLink is an offline-first, low-bandwidth optimized telemedicine platform
 
 ---
 
-## 🏗️ System Architecture
+## System Architecture
 
 ```mermaid
 graph TD
@@ -31,7 +31,7 @@ graph TD
 
 ---
 
-## 📱 RuralCareLink Mobile App (Health Worker Client)
+## RuralCareLink Mobile App (Health Worker Client)
 
 Designed to run on low-cost tablets and smartphones, utilizing offline-first principles to operate in areas with intermittent or zero internet connectivity.
 
@@ -63,7 +63,7 @@ Designed to run on low-cost tablets and smartphones, utilizing offline-first pri
 
 ---
 
-## 💻 Doctor Dashboard (Specialist Web Portal)
+## Doctor Dashboard (Specialist Web Portal)
 
 A premium dashboard for doctors to review patient history, consult in real-time, issue prescriptions, and manage follow-ups/referrals.
 
@@ -91,7 +91,7 @@ A premium dashboard for doctors to review patient history, consult in real-time,
 
 ---
 
-## ⚙️ Backend API & Signaling Server
+## Backend API & Signaling Server
 
 A Node.js backend providing database operations, authentication, synchronization logic, and real-time signaling for WebRTC peer connections.
 
