@@ -450,7 +450,8 @@ export function CaseReview({ caseId, onBack }: Props) {
               ) : (
                 c.images.map((img: any, i: number) => {
                   const isPdf = img.mimeType === "application/pdf" || img.filename?.toLowerCase().endsWith(".pdf") || img.url?.toLowerCase().endsWith(".pdf");
-                  const fileUrl = img.url.startsWith("http") ? img.url : `${window.location.protocol}//${window.location.hostname}:4000${img.url}`;
+                  const backendHost = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace(/\/api$/, '') : `${window.location.protocol}//${window.location.hostname}:4000`;
+                  const fileUrl = img.url.startsWith("http") ? img.url : `${backendHost}${img.url}`;
                   
                   if (isPdf) {
                     return (
