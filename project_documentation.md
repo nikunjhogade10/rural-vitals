@@ -4,7 +4,7 @@ RuralCareLink is an offline-first, low-bandwidth optimized telemedicine platform
 
 ---
 
-## System Architecture
+##System Architecture
 
 ```mermaid
 graph TD
@@ -31,7 +31,7 @@ graph TD
 
 ---
 
-## RuralCareLink Mobile App (Health Worker Client)
+##RuralCareLink Mobile App (Health Worker Client)
 
 Designed to run on low-cost tablets and smartphones, utilizing offline-first principles to operate in areas with intermittent or zero internet connectivity.
 
@@ -54,7 +54,7 @@ Designed to run on low-cost tablets and smartphones, utilizing offline-first pri
 6. **Multi-lingual Support (i18n)**:
    - Localization for **English**, **Hindi (हिंदी)**, **Marathi (ಮರಾठी)**, **Kannada (ಕನ್ನಡ)**, **Tamil (தமிழ்)**, and **Telugu (తెలుగు)**.
 
-### Technology Stack & Dependencies
+###Technology Stack & Dependencies
 * **Core**: React `18.3.1`, TypeScript, Vite `6.3.5`
 * **Mobile Wrapper**: Capacitor `^6.0.0`
 * **Local Storage**: IndexedDB (using `idb`)
@@ -63,7 +63,7 @@ Designed to run on low-cost tablets and smartphones, utilizing offline-first pri
 
 ---
 
-## Doctor Dashboard (Specialist Web Portal)
+##Doctor Dashboard (Specialist Web Portal)
 
 A premium dashboard for doctors to review patient history, consult in real-time, issue prescriptions, and manage follow-ups/referrals.
 
@@ -83,7 +83,7 @@ A premium dashboard for doctors to review patient history, consult in real-time,
 5. **Doctor Profile Settings**:
    - Simplified settings page containing only the doctor's professional information.
 
-### Technology Stack & Dependencies
+###Technology Stack & Dependencies
 * **Core**: React `18.3.1`, TypeScript, Vite `6.3.5`
 * **Charts**: Recharts `2.15.2`
 * **Styling**: Tailwind CSS `4.1.12` & Material UI (MUI) `7.3.5`
@@ -91,11 +91,11 @@ A premium dashboard for doctors to review patient history, consult in real-time,
 
 ---
 
-## Backend API & Signaling Server
+##Backend API & Signaling Server
 
 A Node.js backend providing database operations, authentication, synchronization logic, and real-time signaling for WebRTC peer connections.
 
-### Key Features
+###Key Features
 1. **REST APIs**:
    - `/auth/login` - Secure JWT-based credentials check.
    - `/visits` & `/patients` - Retrieve and manage cases.
@@ -105,7 +105,7 @@ A Node.js backend providing database operations, authentication, synchronization
 3. **Database Layer**:
    - PostgreSQL database accessed via Prisma Client ORM for type-safe queries.
 
-### Technology Stack & Dependencies
+###Technology Stack & Dependencies
 * **Express Framework**: Express `^5.2.1`
 * **Database ORM**: Prisma Client `^7.8.0` & `@prisma/adapter-pg`
 * **Database Driver**: pg `^8.21.0`
